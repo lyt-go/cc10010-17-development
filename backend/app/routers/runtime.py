@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 
 from app.schemas import ActionResult, EntryPayload, PageResult
+from app.services.baseline_timeline import timeline_service
 from app.services.runtime import RuntimeService
 
 router = APIRouter(prefix="/api/runtime", tags=["运行实例"])
@@ -23,9 +24,10 @@ def list_entries(
     page: int = 1,
     size: int = 20,
 ) -> PageResult[dict]:
-    """按记录编号与状态过滤运行实例列表；没有数据时返回空页，不报错。"""
+    """按记录编号与状态过滤运行实例列表；列表同时带出已确认的基线结论。"""
     if size > 200:
         raise HTTPException(status_code=400, detail="每页最多 200 条，请缩小分页范围")
+    timeline_service.ensure_computed()
     items, total = service.list_entries(keyword=keyword, status=status, page=page, size=size)
     return PageResult(items=items, total=total, page=page, size=size)
 
@@ -33,10 +35,22 @@ def list_entries(
 @router.get("/{entry_id}", response_model=dict)
 def get_entry(entry_id: int) -> dict:
     """读取单条运行记录明细；不存在时给出可读的错误说明。"""
+    timeline_service.ensure_computed()
     entry = service.get_entry(entry_id)
     if entry is None:
         raise HTTPException(status_code=404, detail=f"运行记录 {entry_id} 不存在或已归档")
     return entry
+
+
+@router.get("/{entry_id}/baseline-timeline", response_model=dict)
+def get_baseline_timeline(entry_id: int) -> dict:
+    """回查该运行实例在基线时间线中的运行水位、缺失分区和预计完成时间。"""
+    entry = service.get_entry(entry_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"运行记录 {entry_id} 不存在或已归档")
+    detail = timeline_service.runtime_timeline(entry)
+    detail["ok"] = True
+    return detail
 
 
 @router.post("", response_model=ActionResult)
